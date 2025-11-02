@@ -1,11 +1,10 @@
 """
-진달래꽃 음악 선호도 조사 앱
-김소월의 진달래꽃 7가지 버전에 대한 선호도를 조사하고 통계를 제공합니다.
+진달래꽃 음악 선호도 조사 앱 (Google Sheets 연동 버전)
+데이터를 Google Sheets에 영구 저장합니다.
 """
 
 import streamlit as st
 import pandas as pd
-import sqlite3
 import plotly.express as px
 import plotly.graph_objects as go
 from pathlib import Path
@@ -19,75 +18,149 @@ st.set_page_config(
     layout="wide"
 )
 
-# 데이터베이스 초기화
-def init_database():
-    """SQLite 데이터베이스 초기화"""
-    conn = sqlite3.connect('survey_data.db')
-    cursor = conn.cursor()
+# Google Sheets 연동 여부 확인
+USE_GOOGLE_SHEETS = False
+try:
+    from google.oauth2 import service_account
+    from googleapiclient.discovery import build
+    import json
     
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS responses (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            age_group TEXT NOT NULL,
-            preferred_version INTEGER NOT NULL,
-            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+    # Streamlit Secrets에서 자격증명 가져오기
+    if "gcp_service_account" in st.secrets:
+        USE_GOOGLE_SHEETS = True
+        credentials = service_account.Credentials.from_service_account_info(
+            st.secrets["gcp_service_account"],
+            scopes=["https://www.googleapis.com/auth/spreadsheets"]
         )
-    ''')
-    
-    conn.commit()
-    conn.close()
+        SPREADSHEET_ID = st.secrets.get("spreadsheet_id", "")
+except Exception as e:
+    st.warning(f"Google Sheets 연동이 비활성화되었습니다. 로컬 저장소를 사용합니다.")
+    USE_GOOGLE_SHEETS = False
 
-# 응답 저장
+# Google Sheets 함수들
+def append_to_sheets(age_group, preferred_version):
+    """Google Sheets에 데이터 추가"""
+    try:
+        service = build('sheets', 'v4', credentials=credentials)
+        sheet = service.spreadsheets()
+        
+        values = [[
+            datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            age_group,
+            str(preferred_version)
+        ]]
+        
+        body = {'values': values}
+        
+        result = sheet.values().append(
+            spreadsheetId=SPREADSHEET_ID,
+            range='응답!A:C',
+            valueInputOption='RAW',
+            body=body
+        ).execute()
+        
+        return True
+    except Exception as e:
+        st.error(f"Google Sheets 저장 실패: {str(e)}")
+        return False
+
+def read_from_sheets():
+    """Google Sheets에서 데이터 읽기"""
+    try:
+        service = build('sheets', 'v4', credentials=credentials)
+        sheet = service.spreadsheets()
+        
+        result = sheet.values().get(
+            spreadsheetId=SPREADSHEET_ID,
+            range='응답!A2:C'  # 헤더 제외
+        ).execute()
+        
+        values = result.get('values', [])
+        
+        if not values:
+            return pd.DataFrame(columns=['timestamp', 'age_group', 'preferred_version'])
+        
+        df = pd.DataFrame(values, columns=['timestamp', 'age_group', 'preferred_version'])
+        df['preferred_version'] = pd.to_numeric(df['preferred_version'])
+        
+        return df
+    except Exception as e:
+        st.error(f"Google Sheets 읽기 실패: {str(e)}")
+        return pd.DataFrame(columns=['timestamp', 'age_group', 'preferred_version'])
+
+# 로컬 저장소 함수들 (fallback)
+def init_local_storage():
+    """세션 상태에 로컬 저장소 초기화"""
+    if 'responses' not in st.session_state:
+        st.session_state.responses = []
+
+def save_local_response(age_group, preferred_version):
+    """세션 상태에 응답 저장"""
+    if 'responses' not in st.session_state:
+        st.session_state.responses = []
+    
+    st.session_state.responses.append({
+        'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        'age_group': age_group,
+        'preferred_version': preferred_version
+    })
+
+def get_local_responses():
+    """세션 상태에서 응답 가져오기"""
+    if 'responses' not in st.session_state or not st.session_state.responses:
+        return pd.DataFrame(columns=['timestamp', 'age_group', 'preferred_version'])
+    
+    return pd.DataFrame(st.session_state.responses)
+
+# 통합 저장/읽기 함수
 def save_response(age_group, preferred_version):
-    """사용자 응답을 데이터베이스에 저장"""
-    conn = sqlite3.connect('survey_data.db')
-    cursor = conn.cursor()
-    
-    cursor.execute('''
-        INSERT INTO responses (age_group, preferred_version, timestamp)
-        VALUES (?, ?, ?)
-    ''', (age_group, preferred_version, datetime.now()))
-    
-    conn.commit()
-    conn.close()
+    """응답 저장 (Google Sheets 또는 로컬)"""
+    if USE_GOOGLE_SHEETS:
+        return append_to_sheets(age_group, preferred_version)
+    else:
+        save_local_response(age_group, preferred_version)
+        return True
 
-# 통계 데이터 가져오기
+def get_responses():
+    """응답 가져오기 (Google Sheets 또는 로컬)"""
+    if USE_GOOGLE_SHEETS:
+        return read_from_sheets()
+    else:
+        return get_local_responses()
+
 def get_statistics():
-    """데이터베이스에서 통계 데이터 조회"""
-    conn = sqlite3.connect('survey_data.db')
+    """통계 데이터 계산"""
+    df = get_responses()
+    
+    if df.empty:
+        return pd.DataFrame(), pd.DataFrame(), 0
     
     # 전체 통계
-    total_df = pd.read_sql_query('''
-        SELECT preferred_version, COUNT(*) as count
-        FROM responses
-        GROUP BY preferred_version
-        ORDER BY preferred_version
-    ''', conn)
+    total_df = df.groupby('preferred_version').size().reset_index(name='count')
+    total_df['preferred_version'] = total_df['preferred_version'].astype(int)
     
     # 연령대별 통계
-    age_group_df = pd.read_sql_query('''
-        SELECT age_group, preferred_version, COUNT(*) as count
-        FROM responses
-        GROUP BY age_group, preferred_version
-        ORDER BY age_group, preferred_version
-    ''', conn)
+    age_group_df = df.groupby(['age_group', 'preferred_version']).size().reset_index(name='count')
+    age_group_df['preferred_version'] = age_group_df['preferred_version'].astype(int)
     
     # 전체 응답 수
-    total_responses = pd.read_sql_query('''
-        SELECT COUNT(*) as total FROM responses
-    ''', conn)['total'][0]
-    
-    conn.close()
+    total_responses = len(df)
     
     return total_df, age_group_df, total_responses
 
 # 메인 앱
 def main():
-    init_database()
+    init_local_storage()
     
     # 제목
     st.title("🌸 진달래꽃 음악 선호도 조사")
     st.markdown("### 김소월의 '진달래꽃' 7가지 버전 중 가장 좋아하는 버전을 선택해주세요")
+    
+    # Google Sheets 상태 표시
+    if USE_GOOGLE_SHEETS:
+        st.success("✅ Google Sheets 연동 활성화 - 데이터가 영구 저장됩니다")
+    else:
+        st.info("ℹ️ 로컬 저장소 사용 중 - 페이지 새로고침 시 데이터가 초기화됩니다")
     
     # 탭 생성
     tab1, tab2 = st.tabs(["📝 설문 참여", "📊 통계 보기"])
@@ -108,7 +181,7 @@ def main():
         st.markdown("---")
         st.markdown("### 🎵 각 버전을 들어보시고 가장 선호하는 버전을 선택해주세요")
         
-        # MP3 파일 경로 설정 (사용자가 업로드할 디렉토리)
+        # MP3 파일 경로 설정
         music_dir = Path("music_files")
         music_dir.mkdir(exist_ok=True)
         
@@ -159,9 +232,11 @@ def main():
             elif preferred_version is None:
                 st.error("선호하는 버전을 선택해주세요!")
             else:
-                save_response(age_group, preferred_version)
-                st.success(f"✨ 응답이 성공적으로 저장되었습니다! ({age_group}, 버전 {preferred_version})")
-                st.balloons()
+                if save_response(age_group, preferred_version):
+                    st.success(f"✨ 응답이 성공적으로 저장되었습니다! ({age_group}, 버전 {preferred_version})")
+                    st.balloons()
+                else:
+                    st.error("응답 저장에 실패했습니다. 다시 시도해주세요.")
     
     # 탭 2: 통계 보기
     with tab2:
@@ -306,6 +381,17 @@ def main():
                 version_age_df.index = [f"버전 {i}" for i in version_age_df.index]
                 version_age_df['총합'] = version_age_df.sum(axis=1)
                 st.dataframe(version_age_df, use_container_width=True)
+                
+                # CSV 다운로드
+                responses_df = get_responses()
+                if not responses_df.empty:
+                    csv = responses_df.to_csv(index=False, encoding='utf-8-sig')
+                    st.download_button(
+                        label="📥 전체 데이터 다운로드 (CSV)",
+                        data=csv,
+                        file_name=f"survey_data_{datetime.now().strftime('%Y%m%d')}.csv",
+                        mime="text/csv"
+                    )
 
 if __name__ == "__main__":
     main()
