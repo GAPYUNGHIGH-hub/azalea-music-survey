@@ -1,311 +1,236 @@
-"""
-진달래꽃 음악 선호도 조사 앱
-김소월의 진달래꽃 7가지 버전에 대한 선호도를 조사하고 통계를 제공합니다.
-"""
-
 import streamlit as st
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
 import pandas as pd
-import sqlite3
-import plotly.express as px
-import plotly.graph_objects as go
-from pathlib import Path
 from datetime import datetime
 import os
+import json
+import plotly.express as px
 
 # 페이지 설정
 st.set_page_config(
-    page_title="진달래꽃 음악 선호도 조사",
+    page_title="진달래꽃 음악 설문조사",
     page_icon="🌸",
-    layout="wide"
+    layout="wide",
+    initial_sidebar_state="collapsed"
 )
 
-# 데이터베이스 초기화
-def init_database():
-    """SQLite 데이터베이스 초기화"""
-    conn = sqlite3.connect('survey_data.db')
-    cursor = conn.cursor()
-    
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS responses (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            age_group TEXT NOT NULL,
-            preferred_version INTEGER NOT NULL,
-            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-        )
-    ''')
-    
-    conn.commit()
-    conn.close()
-
-# 응답 저장
-def save_response(age_group, preferred_version):
-    """사용자 응답을 데이터베이스에 저장"""
-    conn = sqlite3.connect('survey_data.db')
-    cursor = conn.cursor()
-    
-    cursor.execute('''
-        INSERT INTO responses (age_group, preferred_version, timestamp)
-        VALUES (?, ?, ?)
-    ''', (age_group, preferred_version, datetime.now()))
-    
-    conn.commit()
-    conn.close()
-
-# 통계 데이터 가져오기
-def get_statistics():
-    """데이터베이스에서 통계 데이터 조회"""
-    conn = sqlite3.connect('survey_data.db')
-    
-    # 전체 통계
-    total_df = pd.read_sql_query('''
-        SELECT preferred_version, COUNT(*) as count
-        FROM responses
-        GROUP BY preferred_version
-        ORDER BY preferred_version
-    ''', conn)
-    
-    # 연령대별 통계
-    age_group_df = pd.read_sql_query('''
-        SELECT age_group, preferred_version, COUNT(*) as count
-        FROM responses
-        GROUP BY age_group, preferred_version
-        ORDER BY age_group, preferred_version
-    ''', conn)
-    
-    # 전체 응답 수
-    total_responses = pd.read_sql_query('''
-        SELECT COUNT(*) as total FROM responses
-    ''', conn)['total'][0]
-    
-    conn.close()
-    
-    return total_df, age_group_df, total_responses
-
-# 메인 앱
-def main():
-    init_database()
-    
-    # 제목
-    st.title("🌸 진달래꽃 음악 선호도 조사")
-    st.markdown("### 김소월의 '진달래꽃' 7가지 버전 중 가장 좋아하는 버전을 선택해주세요")
-    
-    # 탭 생성
-    tab1, tab2 = st.tabs(["📝 설문 참여", "📊 통계 보기"])
-    
-    # 탭 1: 설문 참여
-    with tab1:
-        st.markdown("---")
+# Google Sheets 연결 설정
+def get_google_sheets_client():
+    """Google Sheets 클라이언트를 생성하고 반환합니다."""
+    try:
+        # 환경 변수에서 credentials 읽기
+        credentials_json = os.environ.get('GOOGLE_CREDENTIALS')
+        spreadsheet_id = os.environ.get('SPREADSHEET_ID')
         
-        # 나이대 선택
-        age_groups = ["10대", "20대", "30대", "40대", "50대", "60대", "70대", "80대", "90대"]
-        age_group = st.selectbox(
-            "연령대를 선택해주세요:",
-            age_groups,
-            index=None,
-            placeholder="연령대 선택..."
-        )
+        if not credentials_json:
+            st.error("❌ GOOGLE_CREDENTIALS 환경 변수가 설정되지 않았습니다!")
+            st.info("Render 대시보드 → Environment에서 GOOGLE_CREDENTIALS를 확인하세요.")
+            return None, None
+            
+        if not spreadsheet_id:
+            st.error("❌ SPREADSHEET_ID 환경 변수가 설정되지 않았습니다!")
+            st.info("Render 대시보드 → Environment에서 SPREADSHEET_ID를 확인하세요.")
+            return None, None
         
-        st.markdown("---")
-        st.markdown("### 🎵 각 버전을 들어보시고 가장 선호하는 버전을 선택해주세요")
+        # JSON 문자열을 파이썬 딕셔너리로 변환
+        try:
+            credentials_dict = json.loads(credentials_json)
+        except json.JSONDecodeError as e:
+            st.error(f"❌ JSON 파싱 에러: {str(e)}")
+            st.info("GOOGLE_CREDENTIALS가 올바른 JSON 형식인지 확인하세요.")
+            return None, None
         
-        # MP3 파일 경로 설정 (사용자가 업로드할 디렉토리)
-        music_dir = Path("music_files")
-        music_dir.mkdir(exist_ok=True)
-        
-        # 7개의 음악 파일 정보
-        music_versions = [
-            {"id": 1, "name": "버전 1", "file": "version_1.mp3"},
-            {"id": 2, "name": "버전 2", "file": "version_2.mp3"},
-            {"id": 3, "name": "버전 3", "file": "version_3.mp3"},
-            {"id": 4, "name": "버전 4", "file": "version_4.mp3"},
-            {"id": 5, "name": "버전 5", "file": "version_5.mp3"},
-            {"id": 6, "name": "버전 6", "file": "version_6.mp3"},
-            {"id": 7, "name": "버전 7", "file": "version_7.mp3"},
+        # Google Sheets API 인증
+        scope = [
+            'https://spreadsheets.google.com/feeds',
+            'https://www.googleapis.com/auth/drive'
         ]
         
-        # 음악 파일 표시 (3열로 배치)
-        cols_per_row = 3
-        for i in range(0, len(music_versions), cols_per_row):
-            cols = st.columns(cols_per_row)
-            for j, col in enumerate(cols):
-                if i + j < len(music_versions):
-                    version = music_versions[i + j]
-                    with col:
-                        st.markdown(f"**{version['name']}**")
-                        file_path = music_dir / version['file']
-                        
-                        if file_path.exists():
-                            with open(file_path, 'rb') as audio_file:
-                                audio_bytes = audio_file.read()
-                                st.audio(audio_bytes, format='audio/mp3')
-                        else:
-                            st.info(f"'{version['file']}' 파일을 music_files 폴더에 넣어주세요")
-        
-        st.markdown("---")
-        
-        # 선호 버전 선택
-        preferred_version = st.radio(
-            "가장 마음에 드는 버전을 선택해주세요:",
-            options=[v['id'] for v in music_versions],
-            format_func=lambda x: f"버전 {x}",
-            horizontal=True,
-            index=None
+        credentials = ServiceAccountCredentials.from_json_keyfile_dict(
+            credentials_dict, 
+            scope
         )
         
-        # 제출 버튼
-        if st.button("✅ 제출하기", type="primary", use_container_width=True):
-            if age_group is None:
-                st.error("연령대를 선택해주세요!")
-            elif preferred_version is None:
-                st.error("선호하는 버전을 선택해주세요!")
-            else:
-                save_response(age_group, preferred_version)
-                st.success(f"✨ 응답이 성공적으로 저장되었습니다! ({age_group}, 버전 {preferred_version})")
-                st.balloons()
-    
-    # 탭 2: 통계 보기
-    with tab2:
-        st.markdown("---")
+        client = gspread.authorize(credentials)
         
-        total_df, age_group_df, total_responses = get_statistics()
+        # 스프레드시트 열기
+        spreadsheet = client.open_by_key(spreadsheet_id)
+        worksheet = spreadsheet.sheet1
         
-        if total_responses == 0:
-            st.info("아직 설문 응답이 없습니다. 첫 번째 응답자가 되어주세요! 🎉")
-            return
+        st.success("✅ Google Sheets 연결 성공!")
         
-        # 전체 통계 표시
-        st.markdown(f"### 📈 전체 통계 (총 {total_responses}명 응답)")
+        return client, worksheet
         
-        col1, col2 = st.columns([2, 1])
-        
-        with col1:
-            # 전체 선호도 바 차트
-            if not total_df.empty:
-                # 백분율 계산
-                total_df['percentage'] = (total_df['count'] / total_responses * 100).round(1)
-                
-                fig_total = px.bar(
-                    total_df,
-                    x='preferred_version',
-                    y='count',
-                    text='percentage',
-                    labels={'preferred_version': '버전', 'count': '응답 수'},
-                    title='전체 선호도 분포',
-                    color='count',
-                    color_continuous_scale='Viridis'
-                )
-                
-                fig_total.update_traces(
-                    texttemplate='%{text}%',
-                    textposition='outside'
-                )
-                
-                fig_total.update_layout(
-                    xaxis=dict(tickmode='linear', tick0=1, dtick=1),
-                    yaxis_title="응답 수",
-                    xaxis_title="버전",
-                    showlegend=False,
-                    height=400
-                )
-                
-                st.plotly_chart(fig_total, use_container_width=True)
-        
-        with col2:
-            # 원형 차트
-            if not total_df.empty:
-                fig_pie = px.pie(
-                    total_df,
-                    values='count',
-                    names='preferred_version',
-                    title='전체 비율',
-                    color_discrete_sequence=px.colors.qualitative.Set3
-                )
-                
-                fig_pie.update_traces(
-                    textposition='inside',
-                    textinfo='percent+label',
-                    hovertemplate='버전 %{label}<br>%{value}명 (%{percent})<extra></extra>'
-                )
-                
-                fig_pie.update_layout(height=400)
-                
-                st.plotly_chart(fig_pie, use_container_width=True)
-        
-        st.markdown("---")
-        
-        # 연령대별 통계
-        st.markdown("### 👥 연령대별 선호도 분석")
-        
-        if not age_group_df.empty:
-            # 히트맵 데이터 준비
-            pivot_df = age_group_df.pivot(
-                index='age_group',
-                columns='preferred_version',
-                values='count'
-            ).fillna(0)
-            
-            # 연령대 순서 정렬
-            age_order = ["10대", "20대", "30대", "40대", "50대", "60대", "70대", "80대", "90대"]
-            pivot_df = pivot_df.reindex([age for age in age_order if age in pivot_df.index])
-            
-            # 히트맵
-            fig_heatmap = px.imshow(
-                pivot_df,
-                labels=dict(x="버전", y="연령대", color="응답 수"),
-                x=[f"버전 {i}" for i in pivot_df.columns],
-                y=pivot_df.index,
-                color_continuous_scale='YlOrRd',
-                aspect="auto",
-                title="연령대별 선호도 히트맵"
-            )
-            
-            fig_heatmap.update_layout(height=500)
-            
-            st.plotly_chart(fig_heatmap, use_container_width=True)
-            
-            st.markdown("---")
-            
-            # 연령대별 그룹화 바 차트
-            fig_grouped = px.bar(
-                age_group_df,
-                x='age_group',
-                y='count',
-                color='preferred_version',
-                barmode='group',
-                labels={'age_group': '연령대', 'count': '응답 수', 'preferred_version': '버전'},
-                title='연령대별 선호도 상세',
-                color_continuous_scale='Viridis'
-            )
-            
-            fig_grouped.update_layout(
-                xaxis={'categoryorder': 'array', 'categoryarray': age_order},
-                height=500,
-                legend_title_text='버전'
-            )
-            
-            st.plotly_chart(fig_grouped, use_container_width=True)
-            
-            st.markdown("---")
-            
-            # 상세 데이터 테이블
-            with st.expander("📋 상세 데이터 보기"):
-                # 각 연령대별 통계
-                st.markdown("#### 연령대별 선호도 분포")
-                display_df = pivot_df.copy()
-                display_df.columns = [f"버전 {col}" for col in display_df.columns]
-                display_df['총합'] = display_df.sum(axis=1)
-                st.dataframe(display_df, use_container_width=True)
-                
-                # 버전별 연령대 분포
-                st.markdown("#### 버전별 연령대 분포")
-                version_age_df = age_group_df.pivot(
-                    index='preferred_version',
-                    columns='age_group',
-                    values='count'
-                ).fillna(0)
-                version_age_df.index = [f"버전 {i}" for i in version_age_df.index]
-                version_age_df['총합'] = version_age_df.sum(axis=1)
-                st.dataframe(version_age_df, use_container_width=True)
+    except gspread.exceptions.APIError as e:
+        st.error(f"❌ Google Sheets API 에러: {str(e)}")
+        st.info("Google Sheets가 서비스 계정과 공유되었는지 확인하세요.")
+        return None, None
+    except Exception as e:
+        st.error(f"❌ Google Sheets 연결 실패: {str(e)}")
+        st.info("환경 변수와 Google Sheets 공유 설정을 확인하세요.")
+        return None, None
 
-if __name__ == "__main__":
-    main()
+# Google Sheets 클라이언트 초기화
+client, worksheet = get_google_sheets_client()
+
+# 앱 제목
+st.title("🌸 진달래꽃 음악 선호도 조사")
+st.markdown("---")
+
+# 안내 메시지
+st.markdown("""
+### 📖 설문 안내
+- 🎵 7가지 버전의 진달래꽃을 들어보세요
+- ❤️ 가장 마음에 드는 **하나의 버전**을 선택해주세요
+- 👤 연령대를 선택하고 투표 버튼을 눌러주세요
+""")
+
+st.markdown("---")
+
+# 제목
+st.header("🎵 각 버전을 들어보세요")
+
+# 음악 파일 경로 설정
+music_folder = "music_files"
+
+# 버전 정보
+version_info = {
+    "버전 1": "🎹 클래식 피아노 반주",
+    "버전 2": "🎸 현대적 어레인지",
+    "버전 3": "🎻 오케스트라 버전",
+    "버전 4": "🎺 재즈 스타일",
+    "버전 5": "🎤 보컬 중심",
+    "버전 6": "🎼 전통 국악 스타일",
+    "버전 7": "🎹 어쿠스틱 버전"
+}
+
+# 3개씩 컬럼으로 배치
+cols = st.columns(3)
+
+for i in range(1, 8):
+    col_idx = (i - 1) % 3
+    with cols[col_idx]:
+        st.subheader(f"버전 {i}")
+        st.caption(version_info.get(f"버전 {i}", ""))
+        
+        music_file = f"{music_folder}/version_{i}.mp3"
+        
+        # 파일 존재 여부 확인
+        if os.path.exists(music_file):
+            with open(music_file, 'rb') as audio_file:
+                audio_bytes = audio_file.read()
+                st.audio(audio_bytes, format='audio/mp3')
+        else:
+            st.error(f"'{music_file}' 파일을 찾을 수 없습니다.")
+
+st.markdown("---")
+
+# 선택 폼
+st.header("📝 설문 참여")
+
+col1, col2 = st.columns(2)
+
+with col1:
+    # 버전 선택
+    selected_version = st.selectbox(
+        "가장 선호하는 버전을 선택하세요 ⭐",
+        ["선택하세요"] + [f"버전 {i}" for i in range(1, 8)],
+        key="version_select"
+    )
+
+with col2:
+    # 연령대 선택
+    age_group = st.selectbox(
+        "연령대를 선택하세요 👤",
+        ["선택하세요", "10대", "20대", "30대", "40대", "50대 이상"],
+        key="age_select"
+    )
+
+# 의견 입력란
+comment = st.text_area(
+    "💬 의견이나 느낀 점을 남겨주세요 (선택사항)",
+    placeholder="이 버전을 선택한 이유나 전체적인 느낌을 자유롭게 작성해주세요..."
+)
+
+st.markdown("---")
+
+# 투표 버튼
+if st.button("🗳️ 투표하기", type="primary", use_container_width=True):
+    # 입력 검증
+    if selected_version == "선택하세요":
+        st.error("⚠️ 버전을 선택해주세요!")
+    elif age_group == "선택하세요":
+        st.error("⚠️ 연령대를 선택해주세요!")
+    else:
+        # 데이터 저장
+        try:
+            if worksheet:
+                # 현재 시간
+                timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                
+                # Google Sheets에 데이터 추가
+                row_data = [timestamp, selected_version, age_group, comment]
+                worksheet.append_row(row_data)
+                
+                st.success("✅ 투표가 완료되었습니다! 감사합니다! 🎉")
+                st.balloons()
+                
+                # 입력 필드 초기화를 위한 안내
+                st.info("💡 페이지를 새로고침하면 새로운 투표를 할 수 있습니다.")
+                
+            else:
+                st.error("❌ Google Sheets 연결이 없어 투표를 저장할 수 없습니다.")
+                st.info("위의 에러 메시지를 확인하고 관리자에게 문의하세요.")
+                
+        except Exception as e:
+            st.error(f"❌ 투표 저장 중 오류가 발생했습니다: {str(e)}")
+            st.info("잠시 후 다시 시도해주세요.")
+
+# 푸터
+st.markdown("---")
+st.markdown("""
+<div style='text-align: center; color: gray; font-size: 0.9em;'>
+    <p>🌸 진달래꽃 음악 선호도 조사 | Made with Streamlit</p>
+    <p>모든 응답은 익명으로 처리됩니다</p>
+</div>
+""", unsafe_allow_html=True)
+```
+
+**복사 방법:**
+```
+1. 위 코드 전체를 마우스로 드래그하여 선택
+2. Ctrl + C (복사)
+3. GitHub 편집 창에 Ctrl + V (붙여넣기)
+```
+
+---
+
+## STEP 5: 변경사항 저장
+```
+1. 페이지를 아래로 스크롤
+2. "Commit changes" 섹션 찾기
+3. Commit message 입력:
+   "Google Sheets 연결 개선 및 디자인 업데이트"
+4. 초록색 "Commit changes" 버튼 클릭
+```
+
+---
+
+## STEP 6: Render 재배포 확인
+```
+1. Render 대시보드로 이동
+2. "Deploy started" 메시지 확인
+3. 2-3분 대기
+4. "Deploy live" 확인
+```
+
+---
+
+## STEP 7: 앱 테스트
+```
+1. https://azalea-music-survey.onrender.com 접속
+2. 새로고침 (F5)
+3. 상단에 다음 중 하나가 표시:
+   ✅ "✅ Google Sheets 연결 성공!"
+   ❌ "❌ Google Sheets 연결 실패: [자세한 에러]"
