@@ -5,7 +5,6 @@ import pandas as pd
 from datetime import datetime
 import os
 import json
-import plotly.express as px
 
 # 페이지 설정
 st.set_page_config(
@@ -24,12 +23,12 @@ def get_google_sheets_client():
         spreadsheet_id = os.environ.get('SPREADSHEET_ID')
         
         if not credentials_json:
-            st.error("❌ GOOGLE_CREDENTIALS 환경 변수가 설정되지 않았습니다!")
+            st.error("GOOGLE_CREDENTIALS 환경 변수가 설정되지 않았습니다!")
             st.info("Render 대시보드 → Environment에서 GOOGLE_CREDENTIALS를 확인하세요.")
             return None, None
             
         if not spreadsheet_id:
-            st.error("❌ SPREADSHEET_ID 환경 변수가 설정되지 않았습니다!")
+            st.error("SPREADSHEET_ID 환경 변수가 설정되지 않았습니다!")
             st.info("Render 대시보드 → Environment에서 SPREADSHEET_ID를 확인하세요.")
             return None, None
         
@@ -37,7 +36,7 @@ def get_google_sheets_client():
         try:
             credentials_dict = json.loads(credentials_json)
         except json.JSONDecodeError as e:
-            st.error(f"❌ JSON 파싱 에러: {str(e)}")
+            st.error(f"JSON 파싱 에러: {str(e)}")
             st.info("GOOGLE_CREDENTIALS가 올바른 JSON 형식인지 확인하세요.")
             return None, None
         
@@ -58,16 +57,16 @@ def get_google_sheets_client():
         spreadsheet = client.open_by_key(spreadsheet_id)
         worksheet = spreadsheet.sheet1
         
-        st.success("✅ Google Sheets 연결 성공!")
+        st.success("Google Sheets 연결 성공!")
         
         return client, worksheet
         
     except gspread.exceptions.APIError as e:
-        st.error(f"❌ Google Sheets API 에러: {str(e)}")
+        st.error(f"Google Sheets API 에러: {str(e)}")
         st.info("Google Sheets가 서비스 계정과 공유되었는지 확인하세요.")
         return None, None
     except Exception as e:
-        st.error(f"❌ Google Sheets 연결 실패: {str(e)}")
+        st.error(f"Google Sheets 연결 실패: {str(e)}")
         st.info("환경 변수와 Google Sheets 공유 설정을 확인하세요.")
         return None, None
 
@@ -96,13 +95,13 @@ music_folder = "music_files"
 
 # 버전 정보
 version_info = {
-    "버전 1": "🎹 클래식 피아노 반주",
-    "버전 2": "🎸 현대적 어레인지",
-    "버전 3": "🎻 오케스트라 버전",
-    "버전 4": "🎺 재즈 스타일",
-    "버전 5": "🎤 보컬 중심",
-    "버전 6": "🎼 전통 국악 스타일",
-    "버전 7": "🎹 어쿠스틱 버전"
+    "버전 1": "클래식 피아노 반주",
+    "버전 2": "현대적 어레인지",
+    "버전 3": "오케스트라 버전",
+    "버전 4": "재즈 스타일",
+    "버전 5": "보컬 중심",
+    "버전 6": "전통 국악 스타일",
+    "버전 7": "어쿠스틱 버전"
 }
 
 # 3개씩 컬럼으로 배치
@@ -122,7 +121,7 @@ for i in range(1, 8):
                 audio_bytes = audio_file.read()
                 st.audio(audio_bytes, format='audio/mp3')
         else:
-            st.error(f"'{music_file}' 파일을 찾을 수 없습니다.")
+            st.error(f"파일을 찾을 수 없습니다: {music_file}")
 
 st.markdown("---")
 
@@ -134,7 +133,7 @@ col1, col2 = st.columns(2)
 with col1:
     # 버전 선택
     selected_version = st.selectbox(
-        "가장 선호하는 버전을 선택하세요 ⭐",
+        "가장 선호하는 버전을 선택하세요",
         ["선택하세요"] + [f"버전 {i}" for i in range(1, 8)],
         key="version_select"
     )
@@ -142,26 +141,26 @@ with col1:
 with col2:
     # 연령대 선택
     age_group = st.selectbox(
-        "연령대를 선택하세요 👤",
+        "연령대를 선택하세요",
         ["선택하세요", "10대", "20대", "30대", "40대", "50대 이상"],
         key="age_select"
     )
 
 # 의견 입력란
 comment = st.text_area(
-    "💬 의견이나 느낀 점을 남겨주세요 (선택사항)",
+    "의견이나 느낀 점을 남겨주세요 (선택사항)",
     placeholder="이 버전을 선택한 이유나 전체적인 느낌을 자유롭게 작성해주세요..."
 )
 
 st.markdown("---")
 
 # 투표 버튼
-if st.button("🗳️ 투표하기", type="primary", use_container_width=True):
+if st.button("투표하기", type="primary", use_container_width=True):
     # 입력 검증
     if selected_version == "선택하세요":
-        st.error("⚠️ 버전을 선택해주세요!")
+        st.error("버전을 선택해주세요!")
     elif age_group == "선택하세요":
-        st.error("⚠️ 연령대를 선택해주세요!")
+        st.error("연령대를 선택해주세요!")
     else:
         # 데이터 저장
         try:
@@ -173,18 +172,18 @@ if st.button("🗳️ 투표하기", type="primary", use_container_width=True):
                 row_data = [timestamp, selected_version, age_group, comment]
                 worksheet.append_row(row_data)
                 
-                st.success("✅ 투표가 완료되었습니다! 감사합니다! 🎉")
+                st.success("투표가 완료되었습니다! 감사합니다!")
                 st.balloons()
                 
                 # 입력 필드 초기화를 위한 안내
-                st.info("💡 페이지를 새로고침하면 새로운 투표를 할 수 있습니다.")
+                st.info("페이지를 새로고침하면 새로운 투표를 할 수 있습니다.")
                 
             else:
-                st.error("❌ Google Sheets 연결이 없어 투표를 저장할 수 없습니다.")
+                st.error("Google Sheets 연결이 없어 투표를 저장할 수 없습니다.")
                 st.info("위의 에러 메시지를 확인하고 관리자에게 문의하세요.")
                 
         except Exception as e:
-            st.error(f"❌ 투표 저장 중 오류가 발생했습니다: {str(e)}")
+            st.error(f"투표 저장 중 오류가 발생했습니다: {str(e)}")
             st.info("잠시 후 다시 시도해주세요.")
 
 # 푸터
@@ -195,42 +194,3 @@ st.markdown("""
     <p>모든 응답은 익명으로 처리됩니다</p>
 </div>
 """, unsafe_allow_html=True)
-```
-
-**복사 방법:**
-```
-1. 위 코드 전체를 마우스로 드래그하여 선택
-2. Ctrl + C (복사)
-3. GitHub 편집 창에 Ctrl + V (붙여넣기)
-```
-
----
-
-## STEP 5: 변경사항 저장
-```
-1. 페이지를 아래로 스크롤
-2. "Commit changes" 섹션 찾기
-3. Commit message 입력:
-   "Google Sheets 연결 개선 및 디자인 업데이트"
-4. 초록색 "Commit changes" 버튼 클릭
-```
-
----
-
-## STEP 6: Render 재배포 확인
-```
-1. Render 대시보드로 이동
-2. "Deploy started" 메시지 확인
-3. 2-3분 대기
-4. "Deploy live" 확인
-```
-
----
-
-## STEP 7: 앱 테스트
-```
-1. https://azalea-music-survey.onrender.com 접속
-2. 새로고침 (F5)
-3. 상단에 다음 중 하나가 표시:
-   ✅ "✅ Google Sheets 연결 성공!"
-   ❌ "❌ Google Sheets 연결 실패: [자세한 에러]"
