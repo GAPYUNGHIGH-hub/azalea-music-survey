@@ -10,11 +10,25 @@ import plotly.graph_objects as go
 
 # 페이지 설정
 st.set_page_config(
-    page_title="진달래꽃 음악 설문조사",
+    page_title="김소월 〈진달래꽃〉 음악 선호도 조사",
     page_icon="🌸",
     layout="wide",
     initial_sidebar_state="collapsed"
 )
+
+# Open Graph 메타 태그 추가 (카카오톡, 메신저 링크 미리보기)
+st.markdown("""
+<head>
+    <meta property="og:title" content="김소월 〈진달래꽃〉은 왜 100년 가까이 다양한 음악으로 다시 태어났을까요?" />
+    <meta property="og:description" content="일곱 가지 버전의 진달래꽃을 들어보고 가장 마음에 닿는 음악을 선택해주세요. 투표 후 김소월 시인과 작곡가들의 이야기를 만나보세요!" />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://azalea-music-survey.onrender.com" />
+    <meta property="og:image" content="https://images.unsplash.com/photo-1490750967868-88aa4486c946?w=1200" />
+    <meta property="og:site_name" content="진달래꽃 음악 선호도 조사" />
+    <meta name="description" content="김소월의 진달래꽃, 100년을 이어온 음악적 여정. 7가지 버전을 비교하고 당신의 선택을 들려주세요." />
+    <meta name="keywords" content="김소월, 진달래꽃, 음악, 가곡, 설문조사, 한국시" />
+</head>
+""", unsafe_allow_html=True)
 
 # 세션 스테이트 초기화
 if 'voted' not in st.session_state:
